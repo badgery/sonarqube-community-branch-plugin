@@ -1,0 +1,92 @@
+# Badgery fork release. A tag such as 26.9.0-badgery.1 builds the plugin JAR
+# and the matching webapp zip, runs the integration test (upstream #1302 by
+# @mpet) against that exact commit, and only then publishes a release with
+# SHA256SUMS. The JAR and webapp must always ship as a matched pair.
+name: badgery-release
+
+on:
+  push:
+    tags:
+      - '*-badgery.*'
+
+permissions:
+  contents: write
+
+jobs:
+  plugin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          java-version: 21
+          java-package: jdk
+          distribution: 'zulu'
+      - uses: actions/cache@v5
+        with:
+          path: ~/.gradle/caches
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+      - name: Build and unit test
+        run: ./gradlew clean build -Pversion=${{ github.ref_name }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: plugin
+          path: build/libs/sonarqube-community-branch-plugin-${{ github.ref_name }}.jar
+          if-no-files-found: error
+
+  webapp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: 'yarn'
+          cache-dependency-path: sonarqube-webapp/yarn.lock
+      - run: ./sonarqube-webapp-addons/setup.sh
+      - working-directory: sonarqube-webapp
+        run: yarn install --no-immutable
+      - working-directory: sonarqube-webapp
+        run: yarn nx run sq-server:build
+      - working-directory: sonarqube-webapp/apps/sq-server/build/webapp
+        run: zip -r ${{ github.workspace }}/sonarqube-webapp.zip ./*
+      - uses: actions/upload-artifact@v7
+        with:
+          name: webapp
+          path: sonarqube-webapp.zip
+          if-no-files-found: error
+
+  integration-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+      - run: bash scripts/integration-test.sh
+
+  release:
+    needs: [plugin, webapp, integration-test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum * | tee SHA256SUMS
+      - uses: softprops/action-gh-release@v3
+        with:
+          name: ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          prerelease: true
+          files: dist/*
+          body: |
+            Badgery build of the SonarQube Community Branch Plugin for SonarQube Community Build ${{ github.ref_name }}.
+            Install the JAR and the matching `sonarqube-webapp.zip` together; never mix them across versions.
+            See [FORK.md](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/FORK.md) for provenance and credits.

@@ -4,6 +4,9 @@ name: integration-test-poc
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - 'badgery/**'
   pull_request:
     paths:
       - 'src/**'
